@@ -1,6 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 
-// Haal keys uit Supabase Secrets
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')
 const GEMINI_API_KEY = Deno.env.get('GOOGLE_API_KEY')
 
@@ -10,17 +9,13 @@ const corsHeaders = {
 }
 
 serve(async (req) => {
-  // 1. Handle CORS (nodig voor aanroepen vanuit je browser)
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
-    // 2. Lees de data van de frontend
+    console.log("--- Start Process Intake (Gemini 2.5) ---");
+    
     const formData = await req.formData()
     const audioFile = formData.get('audio') as File
-    
-    // Context en data ophalen (of lege objecten als het de start is)
     const contextStr = formData.get('context') as string
     const currentDataStr = formData.get('extractedData') as string
     
@@ -29,10 +24,7 @@ serve(async (req) => {
 
     if (!audioFile) throw new Error('Geen audio bestand ontvangen')
 
-    // ----------------------------------------------------------------
-    // STAP A: Spraak naar Tekst (OpenAI Whisper)
-    // ----------------------------------------------------------------
-    console.log("Stap 1: Audio transcriberen...")
+    // --- STAP 1: WHISPER (Spraak naar Tekst) ---
     const transcriptionBody = new FormData()
     transcriptionBody.append('file', audioFile)
     transcriptionBody.append('model', 'whisper-1')
@@ -44,89 +36,75 @@ serve(async (req) => {
       body: transcriptionBody,
     })
     
-    if (!sttResponse.ok) {
-      const err = await sttResponse.text()
-      throw new Error(`Whisper API Error: ${err}`)
-    }
+    if (!sttResponse.ok) throw new Error(`Whisper Error: ${await sttResponse.text()}`)
     
     const sttData = await sttResponse.json()
     const userText = sttData.text
     console.log("Gebruiker zei:", userText)
 
-    // ----------------------------------------------------------------
-    // STAP B: Het Brein (Google Gemini)
-    // ----------------------------------------------------------------
-    console.log("Stap 2: Antwoord genereren met Gemini...")
+    // --- STAP 2: GEMINI 2.5 FLASH (Het Brein) ---
+    // We gebruiken nu het nieuwste, snelle model.
+    const MODEL_NAME = "gemini-2.5-flash"; 
     
     const systemPrompt = `
-      Je bent de vriendelijke, professionele AI-intakecoördinator van vrijwilligersplatform 'Tussenheid'. 
-      Jouw doel is om via een kort gesprek de benodigde gegevens van de vrijwilliger te verzamelen.
+      Je bent de vriendelijke, professionele AI-intakecoördinator van 'Tussenheid'. 
       
-      Jouw Gespreksstijl:
-      - Luister naar de toon van de gebruiker:
-        * Formeel/Oud (zoals Els): Wees respectvol, duidelijk, gebruik 'u'.
-        * Vlot/Jong (zoals Sarah): Wees enthousiast en efficiënt.
-        * Praktisch/Kort (zoals Peter): Wees direct en laagdrempelig ("geen gedoe").
-      - Houd je antwoorden KORT (maximaal 2-3 zinnen). Dit is een spraakgesprek.
-
-      De data die je moet verzamelen (vraag dit stap voor stap, niet alles tegelijk!):
+      Jouw doel: Verzamel ontbrekende gegevens voor een vrijwilligersmatch.
+      Huidige kennis (JSON): ${JSON.stringify(currentData)}
+      Gebruiker input: "${userText}"
+      
+      Verzamel deze info (stel max 1 vraag tegelijk):
       1. Naam
-      2. Postcode of Woonplaats (voor afstandsbepaling)
-      3. Voorkeur type werk (Bestuurlijk/Denkwerk vs Praktisch/Handen)
+      2. Postcode/Woonplaats
+      3. Type werk (Bestuurlijk vs Praktisch)
       4. Beschikbaarheid
-      5. Contactvoorkeur (Telefoon of E-mail)
+      5. Contactvoorkeur
 
-      Huidige status: ${context.stage || 'start'}
-      Wat we al weten (JSON): ${JSON.stringify(currentData)}
-      De gebruiker zei zojuist: "${userText}"
-
-      Jouw taak:
-      1. Update de JSON-data met nieuwe informatie uit de tekst van de gebruiker.
-      2. Formuleer een passend, gesproken antwoord om het gesprek voort te zetten of af te ronden.
-      
-      Geef je antwoord ALTIJD in dit strikte JSON format (geen markdown blokken eromheen!):
+      Output JSON formaat:
       {
-        "bot_response": "De tekst die je uitspreekt",
-        "extracted_data": { ...alle velden die je nu weet... },
+        "bot_response": "Korte gesproken reactie (max 2 zinnen)",
+        "extracted_data": { ...geupdate velden... },
         "is_finished": boolean
       }
     `
 
-    const geminiBody = {
-      contents: [{ parts: [{ text: systemPrompt }] }],
-      generationConfig: { response_mime_type: "application/json" }
-    }
-
-    const llmResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+    const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${GEMINI_API_KEY}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(geminiBody)
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: systemPrompt }] }],
+        generationConfig: { 
+            response_mime_type: "application/json",
+            temperature: 0.7 
+        }
+      })
     })
 
-    if (!llmResponse.ok) {
-      const err = await llmResponse.text()
-      throw new Error(`Gemini API Error: ${err}`)
+    if (!geminiResponse.ok) {
+        const errText = await geminiResponse.text();
+        console.error("Gemini 2.5 Error:", errText);
+        // Fallback naar 1.5 als 2.5 toch niet mag van je API key rechten
+        throw new Error(`Gemini API Error (${MODEL_NAME}): ${errText}`);
     }
     
-    const llmData = await llmResponse.json()
-    const rawContent = llmData.candidates?.[0]?.content?.parts?.[0]?.text
-    let aiResult
-    try {
-        aiResult = JSON.parse(rawContent)
-    } catch (e) {
-        // Fallback als JSON parse faalt (zou niet moeten gebeuren met response_mime_type)
-        console.error("JSON Parse error", rawContent)
-        aiResult = { 
-            bot_response: "Sorry, ik begreep dat even niet. Kunt u het herhalen?", 
-            extracted_data: currentData, 
-            is_finished: false 
+    const geminiData = await geminiResponse.json()
+    // Veilig parsen van het antwoord
+    const rawContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text
+    let aiResult = { 
+        bot_response: "Sorry, ik kon dat niet verwerken.", 
+        extracted_data: currentData, 
+        is_finished: false 
+    };
+
+    if (rawContent) {
+        try {
+            aiResult = JSON.parse(rawContent);
+        } catch (e) {
+            console.error("JSON Parse fout:", rawContent);
         }
     }
 
-    // ----------------------------------------------------------------
-    // STAP C: Tekst naar Spraak (OpenAI TTS)
-    // ----------------------------------------------------------------
-    console.log("Stap 3: Audio genereren...")
+    // --- STAP 3: TTS (Tekst naar Spraak) ---
     const ttsResponse = await fetch('https://api.openai.com/v1/audio/speech', {
       method: 'POST',
       headers: {
@@ -136,22 +114,16 @@ serve(async (req) => {
       body: JSON.stringify({
         model: "tts-1",
         input: aiResult.bot_response,
-        voice: "nova", // 'Nova' is een prettige, neutrale stem
+        voice: "nova",
         response_format: "mp3",
       }),
     })
 
-    if (!ttsResponse.ok) {
-       const err = await ttsResponse.text()
-       throw new Error(`TTS API Error: ${err}`)
-    }
+    if (!ttsResponse.ok) throw new Error(`TTS Error: ${await ttsResponse.text()}`)
 
     const audioArrayBuffer = await ttsResponse.arrayBuffer()
     const audioBase64 = btoa(String.fromCharCode(...new Uint8Array(audioArrayBuffer)))
 
-    // ----------------------------------------------------------------
-    // Response naar Frontend
-    // ----------------------------------------------------------------
     return new Response(
       JSON.stringify({
         userText,
@@ -164,7 +136,7 @@ serve(async (req) => {
     )
 
   } catch (error: any) {
-    console.error("Server Error:", error)
+    console.error("Critical Error:", error)
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

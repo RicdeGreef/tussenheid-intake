@@ -102,12 +102,13 @@ export const ChatInterface = ({ onBack }: ChatInterfaceProps) => {
         
       } catch (error) {
         console.error('Error processing audio:', error);
-        toast({
-          title: "Verbindingsfout",
-          description: "Kon geen verbinding maken met de assistent. Probeer het opnieuw.",
-          variant: "destructive",
-        });
-        setMicState('idle');
+  toast({
+    title: "Foutmelding",
+    // Hierdoor zie je wat de server teruggeeft (bijv. "Server Error 500: ...")
+    description: error.message || "Er ging iets mis.", 
+    variant: "destructive",
+  });
+  setMicState('idle');
       }
       
     } else {
