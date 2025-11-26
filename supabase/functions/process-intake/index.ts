@@ -1,5 +1,3 @@
-// supabase/functions/process-intake/index.ts
-
 // Setup basis server
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')
 
@@ -15,51 +13,68 @@ Deno.serve(async (req) => {
   }
 
   try {
-    console.log("--- Start Intake (Powered by OpenAI GPT-4o) ---")
+    console.log("--- Start Intake Request ---")
+
+    // Check of API keys aanwezig zijn
+    if (!OPENAI_API_KEY) {
+        throw new Error("Server configuratie fout: OPENAI_API_KEY ontbreekt.")
+    }
 
     // 2. Lees de data
     const formData = await req.formData()
-    const audioFile = formData.get('audio') as File
+    const audioFile = formData.get('audio') as File | null
+    const textInput = formData.get('textInput') as string | null
     const currentDataStr = formData.get('extractedData') as string
     
-    // Robuust parsen van de JSON data
+    // Veilig parsen van input data
     let currentData = {};
     try {
-        if (currentDataStr) currentData = JSON.parse(currentDataStr);
+        if (currentDataStr && currentDataStr !== "undefined" && currentDataStr !== "null") {
+            currentData = JSON.parse(currentDataStr);
+        }
     } catch (e) {
-        console.error("Kon extractedData niet parsen:", e);
+        console.error("Data parse waarschuwing:", e);
     }
 
-    if (!audioFile) throw new Error('Geen audio bestand ontvangen')
-
-    // ----------------------------------------------------------------
-    // STAP 1: WHISPER (Spraak naar Tekst)
-    // ----------------------------------------------------------------
-    console.log("Stap 1: Transcriberen (Whisper)...")
-    const transcriptionBody = new FormData()
-    transcriptionBody.append('file', audioFile)
-    transcriptionBody.append('model', 'whisper-1')
-    // We laten 'language' weg of zetten hem op 'nl', maar auto-detect is vaak veiliger bij korte audio
-    transcriptionBody.append('language', 'nl') 
-
-    const sttResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },
-      body: transcriptionBody,
-    })
-
-    if (!sttResponse.ok) {
-        const err = await sttResponse.text();
-        console.error("Whisper Error:", err);
-        throw new Error(`Whisper API Error: ${err}`)
+    // Check input
+    if (!audioFile && !textInput) {
+        return createResponse("", "Ik hoorde niets. Kunt u dat herhalen?", "", currentData, false);
     }
-    
-    const sttData = await sttResponse.json()
-    const userText = sttData.text || ""
-    console.log("Gebruiker zei:", userText)
 
-    // Als de gebruiker niets zei (of Whisper faalde), geef een fallback zonder GPT te bellen
-    if (userText.trim().length < 2) {
+    let userText = "";
+
+    // ----------------------------------------------------------------
+    // STAP 1: Input Verwerken (Whisper of Tekst)
+    // ----------------------------------------------------------------
+    if (audioFile) {
+        console.log("Stap 1: Audio transcriberen...")
+        const transcriptionBody = new FormData()
+        transcriptionBody.append('file', audioFile)
+        transcriptionBody.append('model', 'whisper-1')
+        // Taal auto-detect is vaak veiliger
+        // transcriptionBody.append('language', 'nl') 
+
+        const sttResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+          body: transcriptionBody,
+        })
+
+        if (!sttResponse.ok) {
+            const err = await sttResponse.text()
+            console.error("Whisper Error:", err)
+            throw new Error(`Fout bij luisteren: ${sttResponse.status}`)
+        }
+        const sttData = await sttResponse.json()
+        userText = sttData.text || ""
+    } else if (textInput) {
+        console.log("Stap 1: Tekst ontvangen")
+        userText = textInput;
+    }
+
+    console.log("Gebruiker input:", userText)
+
+    if (!userText || userText.trim().length < 2) {
         return createResponse(
             "", 
             "Excuus, ik hoorde u niet goed. Kunt u dat herhalen?", 
@@ -72,26 +87,28 @@ Deno.serve(async (req) => {
     // ----------------------------------------------------------------
     // STAP 2: GPT-4o (Het Brein)
     // ----------------------------------------------------------------
-    console.log("Stap 2: Denken (GPT-4o)...")
+    console.log("Stap 2: AI aan het denken...")
 
     const systemPrompt = `
-      Je bent de vriendelijke, professionele AI-intakecoördinator van vrijwilligersplatform 'Tussenheid'.
+      Je bent de vriendelijke, professionele AI-intakecoördinator van 'Tussenheid'.
       
-      Jouw doel: Verzamel ontbrekende gegevens voor een match via een gesproken gesprek.
+      Huidige data (JSON): ${JSON.stringify(currentData)}
       
-      Huidige kennis van de gebruiker (JSON): ${JSON.stringify(currentData)}
-      
-      Verzamel deze info (stel max 1 vraag tegelijk!):
-      1. Naam
-      2. Postcode of Woonplaats
-      3. Type werk (Bestuurlijk/Denkwerk vs Praktisch/Handen)
-      4. Beschikbaarheid
-      5. Contactvoorkeur (Telefoon/E-mail)
+      Jouw doel: Verzamel ontbrekende velden (naam, postcode, type_werk, beschikbaarheid, contact).
+      Stel max 1 vraag tegelijk.
 
       Instructies:
-      - Pas je toon aan op de gebruiker (Formeel bij ouderen, vlot bij jongeren).
-      - Antwoord KORT en bondig (max 2 zinnen), want het wordt uitgesproken.
-      - Geef ALTIJD antwoord in JSON formaat.
+      1. Update de data op basis van de input.
+      2. Stel een vervolgvraag als er iets mist.
+      3. Houd het antwoord KORT (max 2 zinnen).
+      4. Antwoord ALTIJD in valide JSON.
+
+      JSON Formaat:
+      {
+        "bot_response": "Tekst om uit te spreken",
+        "extracted_data": { ... },
+        "is_finished": boolean
+      }
     `
 
     const llmResponse = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -101,37 +118,46 @@ Deno.serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: "gpt-4o", // Het slimste model
+        model: "gpt-4o",
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `De gebruiker zei zojuist: "${userText}". Update de data en geef antwoord.` }
+          { role: "user", content: userText }
         ]
       })
     })
 
-    if (!llmResponse.ok) throw new Error(`OpenAI LLM Error: ${await llmResponse.text()}`)
+    if (!llmResponse.ok) {
+        const err = await llmResponse.text()
+        console.error("OpenAI LLM Error:", err)
+        throw new Error(`Fout bij nadenken: ${llmResponse.status}`)
+    }
 
     const llmData = await llmResponse.json()
     const rawContent = llmData.choices[0].message.content
     
     let aiResult = { 
-        bot_response: "Ik begrijp het, vertel me meer.", 
+        bot_response: "Een moment geduld alstublieft.", 
         extracted_data: currentData, 
         is_finished: false 
     };
 
     try {
-        const parsed = JSON.parse(rawContent);
-        aiResult = { ...aiResult, ...parsed };
+        const cleanJson = rawContent.replace(/```json/g, "").replace(/```/g, "").trim();
+        const parsed = JSON.parse(cleanJson);
+        aiResult = { ...aiResult, ...parsed, extracted_data: { ...currentData, ...parsed.extracted_data } };
     } catch (e) {
-        console.error("JSON Parse fout:", rawContent);
+        console.error("JSON Parse Error:", rawContent);
+        // Fallback: als het geen JSON is, gebruik de ruwe tekst
+        if (!rawContent.trim().startsWith("{")) {
+             aiResult.bot_response = rawContent;
+        }
     }
 
     // ----------------------------------------------------------------
     // STAP 3: TTS (Tekst naar Spraak)
     // ----------------------------------------------------------------
-    console.log("Stap 3: Spreken (TTS)...", aiResult.bot_response)
+    console.log("Stap 3: Audio genereren...", aiResult.bot_response)
     
     const ttsResponse = await fetch('https://api.openai.com/v1/audio/speech', {
       method: 'POST',
@@ -141,13 +167,23 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         model: "tts-1",
-        input: aiResult.bot_response || "Een momentje alstublieft.",
+        input: aiResult.bot_response,
         voice: "nova",
         response_format: "mp3",
       }),
     })
 
-    if (!ttsResponse.ok) throw new Error(`TTS Error: ${await ttsResponse.text()}`)
+    if (!ttsResponse.ok) {
+        console.error("TTS Error:", await ttsResponse.text())
+        // We gaan niet crashen op TTS, maar sturen gewoon geen audio terug
+        return createResponse(
+            userText,
+            aiResult.bot_response,
+            "", // Geen audio
+            aiResult.extracted_data,
+            aiResult.is_finished
+        );
+    }
 
     const audioArrayBuffer = await ttsResponse.arrayBuffer()
     const audioBase64 = btoa(String.fromCharCode(...new Uint8Array(audioArrayBuffer)))
@@ -161,15 +197,14 @@ Deno.serve(async (req) => {
     );
 
   } catch (error: any) {
-    console.error("Critical Error:", error)
-    return new Response(JSON.stringify({ error: error.message }), {
+    console.error("CRITICAL SERVER ERROR:", error)
+    return new Response(JSON.stringify({ error: error.message || "Onbekende server fout" }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   }
 })
 
-// Hulpfunctie voor consistente response
 function createResponse(userText: string, botText: string, audioBase64: string, extractedData: any, isFinished: boolean) {
     return new Response(
       JSON.stringify({ userText, botText, audioBase64, extractedData, isFinished }),

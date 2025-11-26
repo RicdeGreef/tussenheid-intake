@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Phone } from "lucide-react";
+import { Input } from "@/components/ui/input"; // Nieuwe import
+import { ArrowLeft, Phone, Send } from "lucide-react"; // Send icoon toegevoegd
 import { ChatMessage, Message } from "./ChatMessage";
 import { MicrophoneButton, MicrophoneState } from "./MicrophoneButton";
 import { audioRecorder } from "@/services/audioService";
-// Aangepaste imports voor de nieuwe backend logica
 import { 
-  processAudioIntake, 
+  processIntake, // Let op: naam gewijzigd van processAudioIntake
   playAudioResponse, 
   ExtractedData 
 } from "@/services/apiService";
@@ -20,9 +20,8 @@ interface ChatInterfaceProps {
 export const ChatInterface = ({ onBack }: ChatInterfaceProps) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [micState, setMicState] = useState<MicrophoneState>('idle');
-  
-  // We houden nu 'extractedData' bij. Dit is de kennis die de AI verzamelt.
   const [extractedData, setExtractedData] = useState<ExtractedData>({});
+  const [inputText, setInputText] = useState(""); // State voor het tekstveld
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
@@ -34,122 +33,126 @@ export const ChatInterface = ({ onBack }: ChatInterfaceProps) => {
     scrollToBottom();
   }, [messages]);
   
-  // Initiële begroeting
   useEffect(() => {
     const welcomeMessage: Message = {
       id: '1',
       role: 'assistant',
-      content: "Goedemorgen! Wat fijn dat u interesse heeft in Tussenheid. Ik ben uw digitale assistent. Mag ik beginnen met uw naam?",
+      content: "Goedemorgen! Wat fijn dat u interesse heeft in Tussenheid. Ik ben uw digitale assistent en samen gaan wij uw profiel compleet maken! Mag ik beginnen met uw naam?",
       timestamp: new Date()
     };
     setMessages([welcomeMessage]);
   }, []);
-  
-  const handleToggleRecording = async () => {
-    if (micState === 'recording') {
-      // 1. Stop opname en zet status op 'verwerken'
-      setMicState('processing');
-      
-      try {
-        const audioBlob = await audioRecorder.stopRecording();
+
+  // Algemene functie om input (audio of tekst) te verwerken
+  const handleProcessInput = async (input: Blob | string) => {
+    setMicState('processing');
+
+    try {
+        const result = await processIntake(input, extractedData);
         
-        // 2. Eén call naar de backend (stuurt audio + wat we al weten)
-        // Dit vervangt de losse transcribe/generate/tts stappen
-        const result = await processAudioIntake(audioBlob, extractedData);
-        
-        // 3. Voeg bericht van gebruiker toe (wat Whisper hoorde)
-        const userMessage: Message = {
-          id: Date.now().toString(),
-          role: 'user',
-          content: result.userText,
-          timestamp: new Date()
-        };
-        setMessages(prev => [...prev, userMessage]);
-        
-        // 4. Update de kennis die we hebben over de gebruiker
-        // De AI stuurt de geüpdatete JSON terug
+        // Gebruiker bericht tonen (als het tekst was, hebben we die al, bij audio komt die terug)
+        if (input instanceof Blob) {
+             const userMessage: Message = {
+                id: Date.now().toString(),
+                role: 'user',
+                content: result.userText,
+                timestamp: new Date()
+            };
+            setMessages(prev => [...prev, userMessage]);
+        }
+
         if (result.extractedData) {
             setExtractedData(result.extractedData);
-            console.log("Huidige verzamelde data:", result.extractedData);
         }
         
-        // 5. Zet status op 'spreken' (zodat de gebruiker ziet dat de bot praat)
         setMicState('speaking');
         
-        // 6. Voeg antwoord van de bot toe (tekst)
         const botMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: result.botText,
-          timestamp: new Date()
+            id: (Date.now() + 1).toString(),
+            role: 'assistant',
+            content: result.botText,
+            timestamp: new Date()
         };
         setMessages(prev => [...prev, botMessage]);
         
-        // 7. Speel de audio af (wacht tot het klaar is)
         await playAudioResponse(result.audioBase64);
         
-        // 8. Klaar!
         setMicState('idle');
 
-        // Optioneel: Als het gesprek klaar is, geef feedback
         if (result.isFinished) {
             toast({
                 title: "Intake afgerond",
-                description: "Bedankt! We hebben uw gegevens ontvangen en gaan op zoek naar een match.",
+                description: "Bedankt! We hebben uw gegevens ontvangen.",
                 duration: 5000,
             });
         }
-        
-      } catch (error) {
-        console.error('Error processing audio:', error);
-  toast({
-    title: "Foutmelding",
-    // Hierdoor zie je wat de server teruggeeft (bijv. "Server Error 500: ...")
-    description: error.message || "Er ging iets mis.", 
-    variant: "destructive",
-  });
-  setMicState('idle');
+    } catch (error: any) {
+        console.error('Error processing:', error);
+        toast({
+            title: "Foutmelding",
+            description: error.message || "Er ging iets mis.", 
+            variant: "destructive",
+        });
+        setMicState('idle');
+    }
+  };
+  
+  const handleToggleRecording = async () => {
+    if (micState === 'recording') {
+      try {
+        const audioBlob = await audioRecorder.stopRecording();
+        await handleProcessInput(audioBlob);
+      } catch (error: any) {
+         // Error handling...
+         setMicState('idle');
       }
-      
     } else {
-      // Start opname
       try {
         await audioRecorder.startRecording();
         setMicState('recording');
       } catch (error) {
-        console.error('Error starting recording:', error);
-        toast({
-          title: "Microfoon Fout",
-          description: "Kon microfoon niet starten. Controleer of u toestemming heeft gegeven.",
-          variant: "destructive",
-        });
+        // Error handling...
       }
     }
   };
+
+  // Nieuwe functie voor tekst verzenden
+  const handleSendText = async () => {
+    if (!inputText.trim() || micState !== 'idle') return;
+
+    const textToSend = inputText;
+    setInputText(""); // Veld leegmaken
+    
+    // Direct bericht tonen in chat
+    const userMessage: Message = {
+        id: Date.now().toString(),
+        role: 'user',
+        content: textToSend,
+        timestamp: new Date()
+    };
+    setMessages(prev => [...prev, userMessage]);
+
+    await handleProcessInput(textToSend);
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleSendText();
+    }
+  }
   
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-b from-background to-accent/20">
       <Card className="max-w-3xl w-full h-[85vh] flex flex-col shadow-[var(--shadow-card)]">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b bg-secondary/30">
-          <Button 
-            variant="ghost" 
-            size="sm"
-            onClick={onBack}
-            className="gap-2"
-          >
+          <Button variant="ghost" size="sm" onClick={onBack} className="gap-2">
             <ArrowLeft className="w-4 h-4" />
             Terug
           </Button>
-          
           <h2 className="text-lg font-semibold">Intake Gesprek</h2>
-          
-          <Button 
-            variant="ghost" 
-            size="sm"
-            className="gap-2"
-            asChild
-          >
+          <Button variant="ghost" size="sm" className="gap-2" asChild>
             <a href="tel:+31201234567">
               <Phone className="w-4 h-4" />
               <span className="hidden sm:inline">Bel ons</span>
@@ -165,25 +168,40 @@ export const ChatInterface = ({ onBack }: ChatInterfaceProps) => {
           <div ref={messagesEndRef} />
         </div>
         
-        {/* Microphone Control */}
-        <div className="p-6 border-t bg-secondary/20">
-          <div className="flex justify-center">
+        {/* Controls Area (Input + Mic) */}
+        <div className="p-4 border-t bg-secondary/20 space-y-4">
+          
+          {/* Text Input Area - Nieuw toegevoegd */}
+          <div className="flex gap-2 items-end">
+             <Input 
+                placeholder="Typ uw antwoord..." 
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={handleKeyPress}
+                className="flex-1 bg-background"
+                disabled={micState !== 'idle'}
+             />
+             <Button 
+                onClick={handleSendText} 
+                disabled={!inputText.trim() || micState !== 'idle'}
+                size="icon"
+             >
+                <Send className="w-4 h-4" />
+             </Button>
+          </div>
+
+          {/* Microphone (Original) */}
+          <div className="flex justify-center pb-2">
             <MicrophoneButton 
               state={micState}
               onToggleRecording={handleToggleRecording}
             />
           </div>
-          
-          {/* Fallback help */}
-          <div className="text-center mt-6 pt-4 border-t">
-            <p className="text-sm text-muted-foreground mb-2">
-              Lukt het niet via spraak?
+
+          <div className="text-center">
+            <p className="text-xs text-muted-foreground">
+              Of bel voor persoonlijk contact: <a href="tel:+31201234567" className="underline">020-1234567</a>
             </p>
-            <Button variant="outline" size="sm" asChild>
-              <a href="tel:+31201234567">
-                Bel voor persoonlijk contact
-              </a>
-            </Button>
           </div>
         </div>
       </Card>

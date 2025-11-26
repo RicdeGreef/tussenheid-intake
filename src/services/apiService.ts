@@ -1,6 +1,7 @@
 // src/services/apiService.ts
 
-// Check of deze URL nog klopt met wat je in je terminal zag bij de laatste deploy!
+// Dit is de URL van jouw live Supabase Edge Function
+// Zorg dat deze nog steeds klopt met jouw project!
 const API_ENDPOINT = "https://eixutpznmpctdwsxymvd.supabase.co/functions/v1/process-intake";
 
 export interface ExtractedData {
@@ -19,28 +20,38 @@ export interface IntakeResponse {
   isFinished: boolean;
 }
 
-export async function processAudioIntake(
-  audioBlob: Blob, 
+/**
+ * Stuurt input (Audio of Tekst) naar de backend.
+ * @param input Blob (audio) of string (tekst)
+ * @param currentData Huidige kennis over de gebruiker
+ */
+export async function processIntake(
+  input: Blob | string, 
   currentData: ExtractedData
 ): Promise<IntakeResponse> {
   
   const formData = new FormData();
   
-  // --- CRUCIALE FIX: Bestandsnaam dynamisch bepalen ---
-  // Whisper heeft de extensie nodig om te weten hoe het bestand te lezen.
-  let extension = 'webm'; 
-  if (audioBlob.type.includes('mp4') || audioBlob.type.includes('m4a')) {
-    extension = 'm4a'; 
-  } else if (audioBlob.type.includes('wav')) {
-    extension = 'wav';
-  } else if (audioBlob.type.includes('ogg')) {
-    extension = 'ogg';
+  // Check of het audio of tekst is
+  if (input instanceof Blob) {
+      // Audio logica (bestandsnaam bepalen)
+      let extension = 'webm'; 
+      if (input.type.includes('mp4') || input.type.includes('m4a')) {
+        extension = 'm4a'; 
+      } else if (input.type.includes('wav')) {
+        extension = 'wav';
+      } else if (input.type.includes('ogg')) {
+        extension = 'ogg';
+      }
+      const fileName = `recording.${extension}`;
+      console.log(`Audio versturen als: ${fileName}`);
+      formData.append('audio', input, fileName);
+  } else if (typeof input === 'string') {
+      // Tekst logica
+      console.log("Tekst bericht versturen:", input);
+      formData.append('textInput', input);
   }
-
-  const fileName = `recording.${extension}`;
-  console.log(`Audio versturen als: ${fileName} (MIME: ${audioBlob.type})`);
-
-  formData.append('audio', audioBlob, fileName);
+  
   formData.append('extractedData', JSON.stringify(currentData));
   formData.append('context', JSON.stringify({ stage: 'interview' }));
 
@@ -65,7 +76,7 @@ export async function processAudioIntake(
 }
 
 export async function playAudioResponse(base64Audio: string): Promise<void> {
-  if (!base64Audio) return; // Geen audio = niets doen
+  if (!base64Audio) return; 
   
   return new Promise((resolve, reject) => {
     try {
@@ -75,10 +86,11 @@ export async function playAudioResponse(base64Audio: string): Promise<void> {
       audio.onerror = (e) => reject(e);
       audio.play().catch((e) => {
         console.error("Audio play error:", e);
-        reject(e);
+        // We rejecten niet, zodat de flow doorgaat (tekst is er immers wel)
+        resolve();
       });
     } catch (e) {
-      reject(e);
+      resolve();
     }
   });
 }
