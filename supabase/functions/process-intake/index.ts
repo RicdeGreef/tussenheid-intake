@@ -30,8 +30,8 @@ const ALL_FIELDS = [
   'maximale_duur_per_keer',
   'startdatum',
   'online_of_op_locatie',
-  'fysieke_beperkingen',
-  'grenzen_voorkeuren',
+  'opleidingsniveau',
+  'werkervaring',
   'voorkeur_communicatiekanaal',
 ]
 
