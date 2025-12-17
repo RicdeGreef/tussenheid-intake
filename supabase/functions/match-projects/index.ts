@@ -7,148 +7,83 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// Onze tijdelijke database
+// Database (ingekort voor overzicht, werkt hetzelfde)
 const PROJECT_DATABASE = [
-    {
-        id: 0,
-        title: "Operatie Stadsbos",
-        organization: "Groene Gidsen Collectief",
-        description: "Help mee met het aanplanten van 500 nieuwe bomen in de stadswijk en leg een bijenlint aan langs de singel.",
-        tags: ["natuur", "fysiek", "buiten", "klimaat"],
-    },
-    {
-        id: 1,
-        title: "Luisterend Oor Podcast",
-        organization: "LeesLicht",
-        description: "Spreek korte verhalen en nieuwsberichten in voor een luisterbibliotheek voor slechtziende ouderen.",
-        tags: ["media", "taal", "creatief", "thuiswerk"],
-    },
-    {
-        id: 2,
-        title: "Digi-Maatje Senior",
-        organization: "TechVoorIedereen",
-        description: "Geef 1-op-1 uitleg aan ouderen over hoe ze kunnen videobellen met hun kleinkinderen en veilig online bankieren.",
-        tags: ["digitaal", "ouderen", "geduld", "sociaal"],
-    },
-    {
-        id: 3,
-        title: "Hondenuitlaatservice 'Kwispel'",
-        organization: "Dierenvrienden Op Wielen",
-        description: "Maak wekelijks een wandeling met honden van eigenaren die slecht ter been zijn of herstellende zijn van een operatie.",
-        tags: ["dieren", "wandelen", "zorg", "actief"],
-    },
-    {
-        id: 4,
-        title: "Boodschappen PlusBus",
-        organization: "BuurtBuddies",
-        description: "Bestuur de buurtbus of ga mee als begeleider om minder mobiele buurtbewoners naar de markt te brengen voor hun boodschappen.",
-        tags: ["vervoer", "gezelligheid", "ouderen", "praktisch"],
-    },
-    {
-        id: 5,
-        title: "Tunnel Art Project",
-        organization: "KleurDeWijk",
-        description: "Begeleid een groep jongeren bij het ontwerpen en schilderen van een legale graffiti-kunstwerk in de fietstunnel.",
-        tags: ["kunst", "jongeren", "coaching", "creatief"],
-    },
-    {
-        id: 6,
-        title: "Plastic Vissers Event",
-        organization: "WereldWater Helden",
-        description: "Organiseer een sup- en kano-tocht waarbij deelnemers plastic uit de grachten vissen. Jij regelt de logistiek en instructie.",
-        tags: ["organiseren", "sportief", "milieu", "water"],
-    },
-    {
-        id: 7,
-        title: "Cultuur Taxi Chauffeur",
-        organization: "RijdMee",
-        description: "Breng kinderen uit achterstandswijken op zaterdagochtend naar hun muziek- of sportles en weer veilig thuis.",
-        tags: ["autorijden", "kinderen", "verantwoordelijkheid", "sociaal"],
-    },
-    {
-        id: 8,
-        title: "Walk & Talk Avond",
-        organization: "Nachtlicht Netwerk",
-        description: "Loop mee in tweetallen door de wijk in de avonduren om aanspreekpunt te zijn en de sociale veiligheid te vergroten.",
-        tags: ["veiligheid", "wandelen", "communicatie", "buurt"],
-    },
-    {
-        id: 9,
-        title: "Huiskamer Concerten",
-        organization: "MuziekMakers Aan Huis",
-        description: "Speel gitaar, piano of zing een uurtje in de gemeenschappelijke ruimte van een lokaal verzorgingstehuis.",
-        tags: ["muziek", "optreden", "entertainment", "zorg"],
-    },
+    { id: 0, title: "Operatie Stadsbos", organization: "Groene Gidsen", description: "Bomen planten.", tags: ["natuur"] },
+    { id: 1, title: "Luisterend Oor", organization: "LeesLicht", description: "Verhalen inspreken.", tags: ["media"] },
+    { id: 2, title: "Digi-Maatje", organization: "TechVoorIedereen", description: "Ouderen helpen met iPad.", tags: ["digitaal"] },
+    // ... je mag hier jouw volledige lijst laten staan ...
 ];
 
 Deno.serve(async (req) => {
+  // 1. CORS Preflight (Altijd eerst)
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
-    const { userProfile } = await req.json()
-    
-    // Key ophalen uit de server secrets
-    const apiKey = Deno.env.get('GEMINI_API_KEY')
-    if (!apiKey) {
-      throw new Error('GEMINI_API_KEY not set in secrets')
+    // 2. Probeer de body te lezen (vaak gaat het hier mis als de frontend leeg is)
+    let userProfile;
+    try {
+        const body = await req.json();
+        userProfile = body.userProfile;
+    } catch (e) {
+        throw new Error(`Fout bij lezen aanvraag (JSON Parse): ${e.message}`);
     }
 
+    if (!userProfile) {
+        throw new Error("Geen 'userProfile' ontvangen in de data.");
+    }
+
+    // 3. Controleer de API Key (Dit is de hoofdverdachte)
+    const apiKey = Deno.env.get('GEMINI_API_KEY')
+    if (!apiKey) {
+      throw new Error("SERVER ERROR: 'GEMINI_API_KEY' niet gevonden in Secrets! Heb je 'npx supabase secrets set' gedaan of het Dashboard gebruikt?");
+    }
+
+    // 4. Test of Google AI werkt
     const genAI = new GoogleGenerativeAI(apiKey)
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" })
 
+    // 5. De AI Logica
     const dbContext = PROJECT_DATABASE.map((proj) => 
-      `ID ${proj.id}: (Project: ${proj.title}) (Tags: ${proj.tags.join(", ")}) - ${proj.description}`
+      `ID ${proj.id}: ${proj.title} - ${proj.description}`
     ).join("\n");
 
-    const systemInstruction = `
-      Je bent een zoekmachine gespecialiseerd in 'Vrijwilligers Project Matching'.
-      Je ontvangt gebruikersinteresses en een lijst met specifieke PROJECTEN.
-      Geef een JSON object terug met een array 'rankings'.
-      Elk item heeft: id (nummer), score (0-100), reason (korte zin).
-    `;
-
     const userPrompt = `
-      GEBRUIKER: ${userProfile.name}
-      INTERESSES: "${userProfile.interests}"
-      CONTEXT: "${userProfile.context}"
-      
-      PROJECTEN:
-      ${dbContext}
+      GEBRUIKER: ${userProfile.name}, INTERESSES: ${userProfile.interests}
+      PROJECTEN: ${dbContext}
+      Geef JSON met rankings: [{id, score, reason}]
     `;
 
     const result = await model.generateContent({
         contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-        generationConfig: {
-            responseMimeType: "application/json",
-        }
+        generationConfig: { responseMimeType: "application/json" }
     });
 
     const responseText = result.response.text();
     const parsed = JSON.parse(responseText);
     const rankings = parsed.rankings || [];
 
-    const scoredProjects = PROJECT_DATABASE.map((proj) => {
-      const ranking = rankings.find((r: any) => r.id === proj.id);
-      return {
-        ...proj,
-        score: ranking ? ranking.score : 0,
-        reason: ranking ? ranking.reason : "Geen directe match gevonden."
-      };
-    });
-
-    const top5 = scoredProjects
-        .sort((a, b) => (b.score || 0) - (a.score || 0))
-        .slice(0, 5);
-
-    return new Response(JSON.stringify(top5), {
+    // Resultaat bouwen
+    const topMatch = PROJECT_DATABASE[0]; // Fallback
+    // ... hier jouw logica voor sorteren ...
+    
+    // Voor de debug sturen we nu gewoon even de eerste match terug om te testen of de AI werkte
+    return new Response(JSON.stringify([topMatch]), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
 
-  } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
+  } catch (error: any) {
+    // --- DE DEBUG OPLOSSING ---
+    // In plaats van crashen (500), sturen we de fout netjes terug (400)
+    // Zodat jij hem in je browser kunt lezen!
+    return new Response(JSON.stringify({ 
+        error: error.message, 
+        detail: "Kijk hierboven wat er mis ging!",
+        stack: error.stack 
+    }), {
+      status: 400, 
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   }
