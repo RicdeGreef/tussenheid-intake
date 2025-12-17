@@ -12,12 +12,15 @@ import {
   ExtractedData,
 } from "@/services/apiService";
 import { toast } from "@/hooks/use-toast";
+import { Project } from "../types"; // Import toegevoegd
 
 interface ChatInterfaceProps {
   onBack: () => void;
+  matchedProject?: Project; // Prop toegevoegd
+  onComplete?: () => void;
 }
 
-export const ChatInterface = ({ onBack }: ChatInterfaceProps) => {
+export const ChatInterface = ({ onBack, matchedProject }: ChatInterfaceProps) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [micState, setMicState] = useState<MicrophoneState>("idle");
   const [extractedData, setExtractedData] = useState<ExtractedData>({});
@@ -34,15 +37,19 @@ export const ChatInterface = ({ onBack }: ChatInterfaceProps) => {
   }, [messages]);
 
   useEffect(() => {
+    // Contextuele welkomstboodschap op basis van match
+    const introText = matchedProject 
+        ? `Goedemorgen! Wat leuk dat u interesse heeft in het project '${matchedProject.title}' bij ${matchedProject.organization}. Ik ben uw digitale assistent en help u graag met de aanmelding. Mag ik beginnen met uw naam?`
+        : "Goedemorgen! Wat fijn dat u interesse heeft in Tussenheid. Ik ben uw digitale assistent en samen gaan wij uw profiel compleet maken! Mag ik beginnen met uw naam?";
+
     const welcomeMessage: Message = {
       id: "1",
       role: "assistant",
-      content:
-        "Goedemorgen! Wat fijn dat u interesse heeft in Tussenheid. Ik ben uw digitale assistent en samen gaan wij uw profiel compleet maken! Mag ik beginnen met uw naam?",
+      content: introText,
       timestamp: new Date(),
     };
     setMessages([welcomeMessage]);
-  }, []);
+  }, [matchedProject]);
 
   // Algemene functie om input (audio of tekst) te verwerken
   const handleProcessInput = async (input: Blob | string) => {
@@ -109,7 +116,6 @@ export const ChatInterface = ({ onBack }: ChatInterfaceProps) => {
         const audioBlob = await audioRecorder.stopRecording();
         await handleProcessInput(audioBlob);
       } catch (error: any) {
-        // Error handling...
         setMicState("idle");
       }
     } else {
@@ -117,7 +123,7 @@ export const ChatInterface = ({ onBack }: ChatInterfaceProps) => {
         await audioRecorder.startRecording();
         setMicState("recording");
       } catch (error) {
-        // Error handling...
+         // Error handling
       }
     }
   };
@@ -149,19 +155,22 @@ export const ChatInterface = ({ onBack }: ChatInterfaceProps) => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-b from-background to-accent/20">
-      <Card className="max-w-3xl w-full h-[85vh] flex flex-col shadow-[var(--shadow-card)]">
+    <div className="h-full flex flex-col bg-white"> 
+    {/* Let op: height full gemaakt voor embedding in container */}
+      <Card className="flex-1 flex flex-col shadow-none border-0 h-full">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b bg-secondary/30">
           <Button variant="ghost" size="sm" onClick={onBack} className="gap-2">
             <ArrowLeft className="w-4 h-4" />
             Terug
           </Button>
-          <h2 className="text-lg font-semibold">Intake Gesprek</h2>
+          <h2 className="text-lg font-semibold">
+             {matchedProject ? `Aanmelding: ${matchedProject.title}` : "Intake Gesprek"}
+          </h2>
           <Button variant="ghost" size="sm" className="gap-2" asChild>
             <a href="tel:+31201234567">
               <Phone className="w-4 h-4" />
-              <span className="hidden sm:inline">Bel ons</span>
+              <span className="hidden sm:inline">Help</span>
             </a>
           </Button>
         </div>
@@ -201,15 +210,6 @@ export const ChatInterface = ({ onBack }: ChatInterfaceProps) => {
               state={micState}
               onToggleRecording={handleToggleRecording}
             />
-          </div>
-
-          <div className="text-center">
-            <p className="text-xs text-muted-foreground">
-              Of bel voor persoonlijk contact:{" "}
-              <a href="tel:+31201234567" className="underline">
-                020-1234567
-              </a>
-            </p>
           </div>
         </div>
       </Card>
