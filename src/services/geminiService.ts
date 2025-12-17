@@ -1,128 +1,48 @@
-
-import { PROJECT_DATABASE } from "../constants";
+import { createClient } from '@supabase/supabase-js';
 import { Project, UserProfile } from "../types";
-import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// 1. Veilig ophalen van variabelen
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-// Fallback: Als AI faalt, doet JavaScript de keyword telling
-const fallbackMatching = (userProfile: UserProfile): Project[] => {
-  console.warn("AI failed, switching to local keyword matching.");
-  const searchTerms = userProfile.interests.toLowerCase().split(/[\s,]+/).filter(w => w.length > 3);
-  
-  return [...PROJECT_DATABASE]
-    .map(proj => {
-      let score = 0;
-      let matches: string[] = [];
-      
-      proj.tags.forEach(tag => {
-        if (searchTerms.some(term => tag.includes(term) || term.includes(tag))) {
-          score += 20;
-          matches.push(tag);
-        }
-      });
-      
-      if (searchTerms.some(term => proj.description.toLowerCase().includes(term) || proj.title.toLowerCase().includes(term))) {
-        score += 10;
-      }
-      
-      return { 
-        ...proj, 
-        score, 
-        reason: matches.length > 0 
-          ? `Gematched op trefwoorden: ${matches.join(", ")}` 
-          : "Geselecteerd op basis van algemene beschrijving." 
-      };
-    })
-    .sort((a, b) => (b.score || 0) - (a.score || 0))
-    .slice(0, 5);
-};
+// 2. Check of ze bestaan VOORDAT we crashen
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error("🚨 CRITIQUE ERROR: Supabase keys ontbreken in .env bestand!");
+  console.error("Zorg dat VITE_SUPABASE_URL en VITE_SUPABASE_ANON_KEY in je .env staan.");
+}
+
+// 3. Initialiseer client (met fallback om wit scherm te voorkomen)
+const supabase = createClient(
+  supabaseUrl || 'https://placeholder.supabase.co', 
+  supabaseAnonKey || 'placeholder'
+);
 
 export const getRankedMatches = async (userProfile: UserProfile): Promise<Project[]> => {
-  // We sturen de database met IDs zodat de AI makkelijk kan verwijzen
-  const dbContext = PROJECT_DATABASE.map((proj) => 
-    `ID ${proj.id}: (Project: ${proj.title}) (Tags: ${proj.tags.join(", ")}) - ${proj.description}`
-  ).join("\n");
+  console.log("Matching aanvragen via Supabase Edge Function...");
 
-  const systemInstruction = `
-    Je bent een zoekmachine gespecialiseerd in 'Vrijwilligers Project Matching'.
-    Je ontvangt gebruikersinteresses en een lijst met specifieke PROJECTEN.
-    
-    Jouw taak:
-    1. Scan de interesses en achtergrond van de gebruiker.
-    2. Zoek de beste matches in de PROJECT BESCHRIJVINGEN en TAGS.
-    3. Puntentelling:
-       - Directe skill/interesse match = 20 punten.
-       - Contextuele match (bijv. 'buiten' past bij 'natuur') = 10 punten.
-    4. Sorteer de projecten van HOOGSTE score naar LAAGSTE score.
-    
-    Geef in het veld 'reason' kort aan WAAROM dit project bij de gebruiker past.
-  `;
-
-  const userPrompt = `
-    GEBRUIKER NAAM: ${userProfile.name}
-    INTERESSES: "${userProfile.interests}"
-    ACHTERGROND/ERVARING: "${userProfile.context}"
-    
-    BESCHIKBARE PROJECTEN:
-    ${dbContext}
-  `;
+  if (!supabaseUrl) {
+    throw new Error("Supabase URL ontbreekt. Check je .env bestand.");
+  }
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: userPrompt,
-      config: {
-        systemInstruction: systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            rankings: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.INTEGER },
-                  score: { type: Type.INTEGER },
-                  reason: { type: Type.STRING },
-                },
-                required: ["id", "score", "reason"]
-              },
-            },
-          },
-        },
-      },
+    const { data, error } = await supabase.functions.invoke('match-projects', {
+      body: { userProfile },
     });
 
-    const text = response.text;
-    if (!text) throw new Error("No response from AI");
+    if (error) {
+      console.error("Supabase Function Error Details:", error);
+      throw error;
+    }
 
-    const parsed = JSON.parse(text);
-    const rankings = parsed.rankings || [];
+    if (!data) {
+        throw new Error("Geen data ontvangen van server (data is null)");
+    }
 
-    // Koppel de AI scores terug aan de echte database objecten
-    const scoredProjects = PROJECT_DATABASE.map((proj) => {
-      const ranking = rankings.find((r: any) => r.id === proj.id);
-      return {
-        ...proj,
-        score: ranking ? ranking.score : 0,
-        reason: ranking ? ranking.reason : "Geen directe match gevonden."
-      };
-    });
+    return data as Project[];
 
-    // Sorteer op score (hoog naar laag)
-    const sorted = scoredProjects.sort((a, b) => (b.score || 0) - (a.score || 0));
-
-    // Pak de top 5
-    const top5 = sorted.slice(0, 5);
-
-    if (top5.length === 0) throw new Error("Geen resultaten");
-
-    return top5;
-
-  } catch (error) {
-    console.error("Gemini Matching failed:", error);
-    return fallbackMatching(userProfile);
+  } catch (error: any) {
+    console.error("Matching failed:", error);
+    // Gooi de error door zodat de UI het kan tonen
+    throw error;
   }
 };
