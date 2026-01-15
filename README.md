@@ -1,73 +1,60 @@
-# Welcome to your Lovable project
+Deze handleiding is bedoeld voor een volgend projectteam om de applicatie binnen 15 minuten draaiende te krijgen. 
+Stap 1: Code Ophalen & Installeren 
 
-## Project info
+Clone de repository van GitHub: 
+git clone [https://github.com/RicdeGreef/tussenheid-intake.git](https://github.com/RicdeGreef/tussenheid-intake.git) 
+cd tussenheid-intake 
+ 
+Installeer de benodigde packages (Frontend): 
+npm install 
+ 
+Stap 2: Supabase Project Aanmaken 
 
-**URL**: https://lovable.dev/projects/5a17fae8-0b42-4f34-8045-e1171f863b92
+Maak een gratis account en project aan op Supabase.com. 
+Ga naar Project Settings -> API. 
+Kopieer de Project URL en de anon / public key. 
+Stap 3: Omgevingsvariabelen Instellen (.env) 
+Let op: Dit bestand staat niet op GitHub om beveiligingsredenen. Je moet dit zelf aanmaken. 
+Maak in de hoofdmap van het project een bestand genaamd .env. 
+Plak de volgende inhoud en vul jouw gegevens in: 
+VITE_SUPABASE_URL=[https://jouw-project-id.supabase.co](https://jouw-project-id.supabase.co) 
+VITE_SUPABASE_ANON_KEY=jouw-lange-anon-key-hier 
+ 
+Stap 4: Backend (Edge Functions) Deployen 
+De intelligentie van de app zit in de Edge Functions. Deze moet je uploaden naar jouw Supabase project. 
+Installeer de Supabase CLI (indien nog niet aanwezig): npm install -g supabase. 
+Login via de terminal: npx supabase login. 
+Link je lokale map aan je online project (gebruik je Project ID uit de URL): 
+npx supabase link --project-ref jouw-project-id 
+ 
+Deploy de functies: 
+npx supabase functions deploy match-projects --no-verify-jwt 
+npx supabase functions deploy process-intake --no-verify-jwt 
+ 
+Stap 5: API Keys Koppelen (Cruciaal!) 
+De server heeft toegang nodig tot Google Gemini. Dit mag nooit in de frontend code staan. 
+Ga naar het Supabase Dashboard -> Edge Functions. 
+Klik op de functie match-projects. 
+Ga naar Secrets (of beheer dit via Project Settings -> Edge Functions). 
+Voeg een nieuw secret toe: 
+Naam: GEMINI_API_KEY 
+Waarde: Je Google AI Studio key (begint met AIza...). 
+Sla op. De functie herstart automatisch. 
+Stap 6: Starten 
+Start de ontwikkelserver: 
+npm run dev 
+ 
+Open de browser op http://localhost:5173 (of de poort die in de terminal staat). De app is nu volledig operationeel. 
+ 
+Tips 
 
-## How can I edit this code?
-
-There are several ways of editing your application.
-
-**Use Lovable**
-
-Simply visit the [Lovable Project](https://lovable.dev/projects/5a17fae8-0b42-4f34-8045-e1171f863b92) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
-
-**Edit a file directly in GitHub**
-
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
-
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/5a17fae8-0b42-4f34-8045-e1171f863b92) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+Eerst de architectuur te analyseren 
+Kijk goed hoe data, AI, frontend en backend met elkaar samenwerken. 
+AI beperkt en doelgericht in te zetten 
+Gebruik AI alleen waar het echt meerwaarde heeft (bijvoorbeeld ranking of selectie). 
+De dataset verder uit te breiden 
+Meer projecten en organisaties zorgen voor betere en realistischere matches. 
+De input van gebruikers te verbeteren 
+Vraag naar achtergrond, vaardigheden en ervaring in plaats van alleen interesses. 
+Blijf testen met echte gebruikers 
+Dit levert waardevolle inzichten op voor verdere optimalisatie. 
